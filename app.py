@@ -1,10 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
-from openai import OpenAI
-
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+import json
+import re
+import ollama
 
 app = FastAPI()
 
@@ -25,30 +24,43 @@ class Problem(BaseModel):
 def solve(req: Problem):
 
     prompt = f"""
-Solve this arithmetic word problem.
+You are solving arithmetic word problems.
 
 Rules:
-- Think carefully.
 - Ignore irrelevant numbers.
-- Return JSON ONLY.
+- Think carefully.
+- Return ONLY valid JSON.
+- Exactly two keys:
+  reasoning
+  answer
 - reasoning must be at least 80 characters.
-- answer must be an INTEGER.
+- answer must be an integer.
 
 Problem:
 {req.problem}
 """
 
-    response = client.responses.create(
-        model="gpt-5-mini",
-        input=prompt,
-    )
+    try:
+        response = ollama.chat(
+            model="llama3.2",
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
 
-    import json
+        text = response["message"]["content"].strip()
 
-    text = response.output_text
-    result = json.loads(text)
+        # extract JSON if wrapped in extra text
+        m = re.search(r"\{.*\}", text, re.S)
+        if m:
+            text = m.group()
 
-    return {
-        "reasoning": str(result["reasoning"]),
-        "answer": int(result["answer"])
-    }
+        result = json.loads(text)
+
+        return {
+            "reasoning": str(result["reasoning"]),
+            "answer": int(result["answer"])
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
